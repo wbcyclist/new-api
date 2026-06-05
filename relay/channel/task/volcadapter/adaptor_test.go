@@ -3,6 +3,7 @@ package volcadapter
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,6 +33,44 @@ func newVolcTaskTestContext(t *testing.T, body []byte) *gin.Context {
 	}
 	c.Set(common.KeyBodyStorage, bs)
 	return c
+}
+
+func TestDoResponse_MapsUpstreamIDToOriginID(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			PublicTaskID: "task_public_123",
+		},
+	}
+	upstreamBody := []byte(`{"id":"upstream_task_456","model":"doubao-seedance-2-0-260128","status":"queued"}`)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(upstreamBody)),
+	}
+
+	taskID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
+	if taskErr != nil {
+		t.Fatalf("DoResponse returned error: %v", taskErr)
+	}
+	if taskID != "upstream_task_456" {
+		t.Fatalf("taskID = %q, want upstream task ID", taskID)
+	}
+	if !bytes.Equal(taskData, upstreamBody) {
+		t.Fatalf("taskData changed: got %s, want %s", taskData, upstreamBody)
+	}
+
+	var got map[string]any
+	if err := common.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not valid JSON: %v; body=%s", err, w.Body.String())
+	}
+	if got["id"] != "task_public_123" {
+		t.Errorf("id = %v, want public task ID", got["id"])
+	}
+	if got["origin_id"] != "upstream_task_456" {
+		t.Errorf("origin_id = %v, want upstream task ID", got["origin_id"])
+	}
 }
 
 // ─────────────────────────────────────────
@@ -95,10 +134,11 @@ func TestAdjustBillingOnComplete_NilBillingContext(t *testing.T) {
 // TestAdjustBillingOnComplete_FlatExpr verifies basic flat expression evaluation.
 //
 // Expression: tier("base", c * 10)  (c in token units, price in $/1M)
-//  tokens = 108_000 (5s 720p output)
-//  cost = 108_000 * 10 = 1_080_000 ($/1M units)
-//  quotaBeforeGroup = 1_080_000 / 1_000_000 * 500 = 540
-//  actualQuota = round(540 * 1.0) = 540
+//
+//	tokens = 108_000 (5s 720p output)
+//	cost = 108_000 * 10 = 1_080_000 ($/1M units)
+//	quotaBeforeGroup = 1_080_000 / 1_000_000 * 500 = 540
+//	actualQuota = round(540 * 1.0) = 540
 func TestAdjustBillingOnComplete_FlatExpr(t *testing.T) {
 	exprStr := `tier("base", c * 10)`
 	snap := buildSnapshot(exprStr, 500.0, 1.0)
@@ -139,8 +179,9 @@ func TestAdjustBillingOnComplete_WithGroupRatio(t *testing.T) {
 //
 // Expression: param("resolution") == "1080p" ? tier("hd", c * 20) : tier("sd", c * 10)
 // With resolution=1080p, tokens=243_000:
-//   cost = 243_000 * 20 = 4_860_000
-//   quota = 4_860_000 / 1_000_000 * 500 * 1.0 = 2430
+//
+//	cost = 243_000 * 20 = 4_860_000
+//	quota = 4_860_000 / 1_000_000 * 500 * 1.0 = 2430
 func TestAdjustBillingOnComplete_ParamResolution(t *testing.T) {
 	exprStr := `param("resolution") == "1080p" ? tier("hd", c * 20) : tier("sd", c * 10)`
 	snap := buildSnapshot(exprStr, 500.0, 1.0)
@@ -213,8 +254,9 @@ func TestAdjustBillingOnComplete_FlagsTakePriorityOverTaskData(t *testing.T) {
 //
 // Expression: param("generate_audio") == true ? tier("audio", c * 15) : tier("silent", c * 10)
 // With generate_audio=true, tokens=108_000:
-//   cost = 108_000 * 15 = 1_620_000
-//   quota = 1_620_000 / 1_000_000 * 500 = 810
+//
+//	cost = 108_000 * 15 = 1_620_000
+//	quota = 1_620_000 / 1_000_000 * 500 = 810
 func TestAdjustBillingOnComplete_WithVolcFlags_Audio(t *testing.T) {
 	exprStr := `param("generate_audio") == true ? tier("audio", c * 15) : tier("silent", c * 10)`
 	snap := buildSnapshot(exprStr, 500.0, 1.0)

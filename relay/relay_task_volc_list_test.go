@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -57,6 +58,50 @@ func insertTaskWithFailReason(t *testing.T, userID int, taskID string, status mo
 	}
 	if err := model.DB.Create(task).Error; err != nil {
 		t.Fatalf("failed to insert task: %v", err)
+	}
+}
+
+func TestVideoFetchByIDRespBuilder_OriginIDLookup(t *testing.T) {
+	setupVolcListTestDB(t)
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:    "task_public_fetch",
+		OriginID:  "upstream_fetch_origin",
+		UserId:    1001,
+		Platform:  volcAdapterPlatform,
+		Status:    model.TaskStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Properties: model.Properties{
+			OriginModelName: "doubao-seedance-2-0-260128",
+		},
+	}
+	if err := model.DB.Create(task).Error; err != nil {
+		t.Fatalf("failed to insert task: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v3/contents/generations/tasks/upstream_fetch_origin", nil)
+	c.Set("id", 1001)
+	c.Set("task_id", "upstream_fetch_origin")
+	c.Set("relay_format", string(types.RelayFormatVolc))
+
+	respBody, taskErr := videoFetchByIDRespBodyBuilder(c)
+	if taskErr != nil {
+		t.Fatalf("unexpected taskErr: %+v", taskErr)
+	}
+
+	var got map[string]any
+	if err := common.Unmarshal(respBody, &got); err != nil {
+		t.Fatalf("failed to decode response: %v\nbody=%s", err, respBody)
+	}
+	if got["id"] != "task_public_fetch" {
+		t.Fatalf("id = %v, want public task id", got["id"])
+	}
+	if got["origin_id"] != "upstream_fetch_origin" {
+		t.Fatalf("origin_id = %v, want upstream origin id", got["origin_id"])
 	}
 }
 
@@ -429,8 +474,8 @@ func TestBuildVolcNativeTaskFetchResp_JSONInjection(t *testing.T) {
 
 	for _, id := range specialIDs {
 		task := &model.Task{
-			TaskID: id,
-			Status: model.TaskStatusQueued,
+			TaskID:     id,
+			Status:     model.TaskStatusQueued,
 			Properties: model.Properties{OriginModelName: "doubao-seedance-2-0-260128"},
 		}
 		resp := buildVolcNativeTaskFetchResp(task)

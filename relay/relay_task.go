@@ -377,7 +377,14 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 	userId := c.GetInt("id")
 
-	originTask, exist, err := model.GetByTaskId(userId, taskId)
+	var originTask *model.Task
+	var exist bool
+	var err error
+	if c.GetString("relay_format") == string(types.RelayFormatVolc) {
+		originTask, exist, err = model.GetByTaskIdOrOriginId(userId, taskId)
+	} else {
+		originTask, exist, err = model.GetByTaskId(userId, taskId)
+	}
 	if err != nil {
 		taskResp = service.TaskErrorWrapper(err, "get_task_failed", http.StatusInternalServerError)
 		return
@@ -454,6 +461,11 @@ func buildVolcNativeTaskFetchResp(t *model.Task) []byte {
 				if idJSON, err := common.Marshal(t.TaskID); err == nil {
 					probe["id"] = json.RawMessage(idJSON)
 				}
+				if originID := t.GetOriginID(); originID != "" {
+					if originIDJSON, err := common.Marshal(originID); err == nil {
+						probe["origin_id"] = json.RawMessage(originIDJSON)
+					}
+				}
 				if patched, err := common.Marshal(probe); err == nil {
 					return patched
 				}
@@ -474,6 +486,9 @@ func buildVolcNativeTaskFetchResp(t *model.Task) []byte {
 		"status":     arkStatus,
 		"created_at": t.CreatedAt,
 		"updated_at": t.UpdatedAt,
+	}
+	if originID := t.GetOriginID(); originID != "" {
+		synth["origin_id"] = originID
 	}
 	if t.Status == model.TaskStatusSuccess {
 		synth["content"] = map[string]string{
@@ -900,6 +915,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		CreatedAt:  task.CreatedAt,
 		UpdatedAt:  task.UpdatedAt,
 		TaskID:     task.TaskID,
+		OriginID:   task.GetOriginID(),
 		Platform:   string(task.Platform),
 		UserId:     task.UserId,
 		Group:      task.Group,

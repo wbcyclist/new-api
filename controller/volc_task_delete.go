@@ -26,17 +26,17 @@ import (
 //  5. Return Volc-native task response shape (same as GET).
 func VolcTaskDelete(c *gin.Context) {
 	userID := c.GetInt("id")
-	publicTaskID := strings.TrimSpace(c.Param("id"))
+	taskIDParam := strings.TrimSpace(c.Param("id"))
 
-	if publicTaskID == "" {
+	if taskIDParam == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "task id is required"})
 		return
 	}
 
 	// 1. Look up task with ownership check (mirrors GET-by-ID path).
-	task, exist, err := model.GetByTaskId(userID, publicTaskID)
+	task, exist, err := model.GetByTaskIdOrOriginId(userID, taskIDParam)
 	if err != nil {
-		logger.LogError(c, "VolcTaskDelete: DB error for task "+publicTaskID+": "+err.Error())
+		logger.LogError(c, "VolcTaskDelete: DB error for task "+taskIDParam+": "+err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -164,7 +164,7 @@ func VolcTaskDelete(c *gin.Context) {
 		// Non-terminal guard rejected update — task already reached a terminal state.
 		// Re-fetch the canonical state from DB and return that instead of the
 		// in-memory cancelled snapshot.
-		refreshed, exist, err := model.GetByTaskId(userID, publicTaskID)
+		refreshed, exist, err := model.GetByTaskId(userID, task.TaskID)
 		if err != nil || !exist || refreshed == nil {
 			logger.LogError(ctx, "VolcTaskDelete: terminal guard lost and refetch failed for task "+task.TaskID)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -195,6 +195,9 @@ func buildVolcDeleteResp(t *model.Task) []byte {
 		"status":     arkStatus,
 		"created_at": t.CreatedAt,
 		"updated_at": t.UpdatedAt,
+	}
+	if originID := t.GetOriginID(); originID != "" {
+		synth["origin_id"] = originID
 	}
 	if t.FailReason != "" {
 		code := "task_failed"

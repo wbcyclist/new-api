@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -26,6 +27,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -73,10 +75,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// Extract model name from raw body so info.UpstreamModelName is populated.
 		if info.UpstreamModelName == "" {
 			var bodyMap map[string]json.RawMessage
-			if jsonErr := json.Unmarshal(rawBytes, &bodyMap); jsonErr == nil {
+			if jsonErr := common.Unmarshal(rawBytes, &bodyMap); jsonErr == nil {
 				if modelRaw, ok := bodyMap["model"]; ok {
 					var m string
-					if jsonErr2 := json.Unmarshal(modelRaw, &m); jsonErr2 == nil && m != "" {
+					if jsonErr2 := common.Unmarshal(modelRaw, &m); jsonErr2 == nil && m != "" {
 						info.UpstreamModelName = m
 					}
 				}
@@ -96,6 +98,60 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	return bytes.NewReader(rawBytes), nil
+}
+
+// DoResponse returns a Volc-native submit response while keeping the upstream
+// task ID available as origin_id. The public gateway task ID stays in id so
+// clients can poll this gateway with /api/v3/contents/generations/tasks/:id.
+func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		taskErr = service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+		return
+	}
+	_ = resp.Body.Close()
+
+	var payload map[string]json.RawMessage
+	if err := common.Unmarshal(responseBody, &payload); err != nil {
+		taskErr = service.TaskErrorWrapper(fmt.Errorf("body: %s: %w", responseBody, err), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		return
+	}
+
+	idRaw, ok := payload["id"]
+	if !ok {
+		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+		return
+	}
+	var upstreamTaskID string
+	if err := common.Unmarshal(idRaw, &upstreamTaskID); err != nil || upstreamTaskID == "" {
+		if err == nil {
+			err = fmt.Errorf("task_id is empty")
+		}
+		taskErr = service.TaskErrorWrapper(err, "invalid_response", http.StatusInternalServerError)
+		return
+	}
+
+	originIDJSON, err := common.Marshal(upstreamTaskID)
+	if err != nil {
+		taskErr = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
+		return
+	}
+	publicIDJSON, err := common.Marshal(info.PublicTaskID)
+	if err != nil {
+		taskErr = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
+		return
+	}
+	payload["origin_id"] = json.RawMessage(originIDJSON)
+	payload["id"] = json.RawMessage(publicIDJSON)
+
+	clientBody, err := common.Marshal(payload)
+	if err != nil {
+		taskErr = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json", clientBody)
+	return upstreamTaskID, responseBody, nil
 }
 
 // EstimateBilling reads the raw Volc body and returns a video_input ratio
@@ -194,7 +250,7 @@ func buildSynthesizedBody(task *model.Task, bc *model.TaskBillingContext) ([]byt
 	// Parse the Volc fetch response from task.Data
 	var fetchResp volcFetchResponse
 	if len(task.Data) > 0 {
-		_ = json.Unmarshal(task.Data, &fetchResp) // best-effort, ignore error
+		_ = common.Unmarshal(task.Data, &fetchResp) // best-effort, ignore error
 	}
 
 	// Build synthesized body map. Flags first; task.Data fills only the gaps.
@@ -234,5 +290,5 @@ func buildSynthesizedBody(task *model.Task, bc *model.TaskBillingContext) ([]byt
 		}
 	}
 
-	return json.Marshal(body)
+	return common.Marshal(body)
 }

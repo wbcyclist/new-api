@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -47,6 +48,7 @@ type Task struct {
 	CreatedAt  int64                 `json:"created_at" gorm:"index"`
 	UpdatedAt  int64                 `json:"updated_at"`
 	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
+	OriginID   string                `json:"origin_id,omitempty" gorm:"type:varchar(191);index"`
 	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
 	UserId     int                   `json:"user_id" gorm:"index"`
 	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
@@ -157,7 +159,17 @@ func (t *Task) GetUpstreamTaskID() string {
 	if t.PrivateData.UpstreamTaskID != "" {
 		return t.PrivateData.UpstreamTaskID
 	}
+	if t.OriginID != "" {
+		return t.OriginID
+	}
 	return t.TaskID
+}
+
+func (t *Task) GetOriginID() string {
+	if t.OriginID != "" {
+		return t.OriginID
+	}
+	return t.PrivateData.UpstreamTaskID
 }
 
 // GetResultURL 获取任务结果 URL（视频地址等）
@@ -375,6 +387,40 @@ func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 		return nil, false, err
 	}
 	return task, exist, err
+}
+
+func GetByTaskIdOrOriginId(userId int, id string) (*Task, bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, false, nil
+	}
+	if strings.HasPrefix(id, "task_") {
+		task, exist, err := GetByTaskId(userId, id)
+		if err != nil || exist {
+			return task, exist, err
+		}
+		return getByOriginId(userId, id)
+	}
+
+	task, exist, err := getByOriginId(userId, id)
+	if err != nil || exist {
+		return task, exist, err
+	}
+	return GetByTaskId(userId, id)
+}
+
+func getByOriginId(userId int, originId string) (*Task, bool, error) {
+	if originId == "" {
+		return nil, false, nil
+	}
+	var task *Task
+	err := DB.Where("user_id = ? and origin_id = ?", userId, originId).
+		First(&task).Error
+	exist, err := RecordExist(err)
+	if err != nil {
+		return nil, false, err
+	}
+	return task, exist, nil
 }
 
 func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {

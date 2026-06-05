@@ -141,6 +141,61 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 	assert.JSONEq(t, string(task.Data), string(snap.Data))
 }
 
+func TestGetByTaskIdOrOriginId_PublicAndOriginLookup(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:   "task_public_123",
+		OriginID: "upstream_origin_456",
+		UserId:   1001,
+		Status:   TaskStatusQueued,
+	}
+	insertTask(t, task)
+
+	byPublic, exist, err := GetByTaskIdOrOriginId(1001, "task_public_123")
+	require.NoError(t, err)
+	require.True(t, exist)
+	assert.Equal(t, task.TaskID, byPublic.TaskID)
+
+	byOrigin, exist, err := GetByTaskIdOrOriginId(1001, "upstream_origin_456")
+	require.NoError(t, err)
+	require.True(t, exist)
+	assert.Equal(t, task.TaskID, byOrigin.TaskID)
+}
+
+func TestGetByTaskIdOrOriginId_FallbackForTaskPrefixedOriginID(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:   "task_public_abc",
+		OriginID: "task_upstream_origin_def",
+		UserId:   1001,
+		Status:   TaskStatusQueued,
+	}
+	insertTask(t, task)
+
+	got, exist, err := GetByTaskIdOrOriginId(1001, "task_upstream_origin_def")
+	require.NoError(t, err)
+	require.True(t, exist)
+	assert.Equal(t, task.TaskID, got.TaskID)
+}
+
+func TestGetByTaskIdOrOriginId_EnforcesOwnership(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:   "task_public_owner",
+		OriginID: "upstream_origin_owner",
+		UserId:   1001,
+		Status:   TaskStatusQueued,
+	}
+	insertTask(t, task)
+
+	_, exist, err := GetByTaskIdOrOriginId(2002, "upstream_origin_owner")
+	require.NoError(t, err)
+	assert.False(t, exist)
+}
+
 // ---------------------------------------------------------------------------
 // UpdateWithStatus CAS — DB integration tests
 // ---------------------------------------------------------------------------

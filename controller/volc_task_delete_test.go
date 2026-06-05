@@ -106,13 +106,21 @@ func TestBuildVolcDeleteResp_Cancelled(t *testing.T) {
 
 func TestBuildVolcDeleteResp_AlreadySucceeded(t *testing.T) {
 	task := &model.Task{
-		TaskID: "task_xyz",
-		Status: model.TaskStatusSuccess,
+		TaskID:     "task_xyz",
+		OriginID:   "upstream_xyz",
+		Status:     model.TaskStatusSuccess,
 		Properties: model.Properties{OriginModelName: "doubao-seedance-2-0"},
 	}
 	resp := buildVolcDeleteResp(task)
 	if !containsString(string(resp), "succeeded") {
 		t.Errorf("response should contain 'succeeded', got: %s", string(resp))
+	}
+	var parsed map[string]interface{}
+	if err := common.Unmarshal(resp, &parsed); err != nil {
+		t.Fatalf("response should be valid JSON: %v", err)
+	}
+	if parsed["origin_id"] != "upstream_xyz" {
+		t.Errorf("origin_id = %v, want upstream_xyz", parsed["origin_id"])
 	}
 }
 
