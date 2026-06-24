@@ -23,7 +23,7 @@ func setupVolcListTestDB(t *testing.T) {
 		t.Fatalf("failed to open test db: %v", err)
 	}
 	model.DB = db
-	common.UsingSQLite = true
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	if err := db.AutoMigrate(&model.Task{}); err != nil {
 		t.Fatalf("failed to migrate task table: %v", err)
 	}

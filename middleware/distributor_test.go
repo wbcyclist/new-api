@@ -46,7 +46,7 @@ func setupDistributorTestDB(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 
 	model.DB = db
-	common.UsingSQLite = true
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.RedisEnabled = false
 	// Use the in-memory channel cache (left empty — no channels loaded).
 	// This causes GetRandomSatisfiedChannel to return (nil, nil) for any model
